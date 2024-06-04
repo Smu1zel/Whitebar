@@ -1,6 +1,6 @@
-﻿#
-# Fido v1.56 - Feature ISO Downloader, for retail Windows images and UEFI Shell
-# Copyright © 2019-2024 Pete Batard <pete@akeo.ie>
+#
+# Whitebar v1.56 - Feature ISO Downloader, for retail Windows images and UEFI Shell
+# Original code from Fido by Pete Batard. Fido is Copyright © 2019-2024 Pete Batard <pete@akeo.ie>
 # Command line support: Copyright © 2021 flx5
 # ConvertTo-ImageSource: Copyright © 2016 Chris Carter
 #
@@ -24,7 +24,7 @@
 #region Parameters
 param(
 	# (Optional) The title to display on the application window.
-	[string]$AppTitle = "Fido - Feature ISO Downloader",
+	[string]$AppTitle = "Whitebar - Feature ISO Downloader",
 	# (Optional) '|' separated UI localization strings.
 	[string]$LocData,
 	# (Optional) Forced locale
@@ -127,7 +127,8 @@ if (!$Cmd) {
 	Add-Type -AssemblyName PresentationFramework
 
 	# Hide the powershell window: https://stackoverflow.com/a/27992426/1069307
-	[WinAPI.Utils]::ShowWindow(([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle, 0) | Out-Null
+# TODO: Uncomment this when the script is finished
+#	[WinAPI.Utils]::ShowWindow(([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle, 0) | Out-Null
 }
 #endregion
 
@@ -494,6 +495,16 @@ if ($LocData -and !$LocData.StartsWith("en-US")) {
 }
 $QueryLocale = $Locale
 
+# Make sure PowerShell 3.0 or later is used (for Invoke-WebRequest)
+if ($PSVersionTable.PSVersion.Major -lt 3) {
+	Write-Host Error: PowerShell 3.0 or later is required to run this script.
+	$Msg = "$(Get-Translation($English[15]))`n$(Get-Translation($English[16]))"
+	if ([System.Windows.MessageBox]::Show($Msg, $(Get-Translation("Error")), "YesNo", "Error") -eq "Yes") {
+		Start-Process -FilePath https://www.microsoft.com/download/details.aspx?id=34595
+	}
+	exit 102
+}
+
 # Convert a size in bytes to a human readable string
 function Size-To-Human-Readable([uint64]$size)
 {
@@ -515,14 +526,11 @@ function Check-Locale
 			Write-Host Querying $url
 		}
 		# Looks Microsoft are filtering our script according to the first query it performs with the spoofed user agent.
-		# So, to continue this pointless cat and mouse game, we simply add an extra first query with the default user agent.
-		# Also: "Hi Microsoft. You sure have A LOT OF RESOURCES TO WASTE to have assigned folks of yours to cripple scripts
-		# that merely exist because you have chosen to make the user experience from your download website utterly subpar.
-		# And while I am glad senpai noticed me (UwU), I feel compelled to ask: Don't you guys have better things to do?"
-		curl -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 $url | Out-Null
-		curl -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 -UserAgent $UserAgent $url | Out-Null
+		# Add an extra first query with the default user agent.
+		Invoke-WebRequest -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 $url | Out-Null
+		Invoke-WebRequest -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 -UserAgent $UserAgent $url | Out-Null
 	} catch {
-		# Of course PowerShell 7 had to BREAK $_.Exception.Status on timeouts...
+		# PowerShell 7 breaks $_.Exception.Status on timeouts.
 		if ($_.Exception.Status -eq "Timeout" -or $_.Exception.GetType().Name -eq "TaskCanceledException") {
 			Write-Host Operation Timed out
 		}
@@ -580,7 +588,7 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 			Write-Host Querying $url
 		}
 		try {
-			curl -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 -UserAgent $UserAgent $url | Out-Null
+			Invoke-WebRequest -UseBasicParsing -TimeoutSec $DefaultTimeout -MaximumRedirection 0 -UserAgent $UserAgent $url | Out-Null
 		} catch {
 			Error($_.Exception.Message)
 			return @()
@@ -599,7 +607,7 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 
 		$script:SelectedIndex = 0
 		try {
-			$r = curl -Method Post -UseBasicParsing -TimeoutSec $DefaultTimeout -UserAgent $UserAgent -SessionVariable "Session" $url
+			$r = Invoke-WebRequest -Method Post -UseBasicParsing -TimeoutSec $DefaultTimeout -UserAgent $UserAgent -SessionVariable "Session" $url
 			if ($r -match "errorModalMessage") {
 				Throw-Error -Req $r -Alt "Could not retrieve languages from server"
 			}
@@ -689,7 +697,17 @@ function Get-Windows-Download-Links([int]$SelectedVersion, [int]$SelectedRelease
 			$Is64 = [Environment]::Is64BitOperatingSystem
 			# Must add a referer for this request, else Microsoft's servers will deny it
 			$ref = "https://www.microsoft.com/software-download/windows11"
-			$r = curl -Method Post -Headers @{ "Referer" = $ref } -UseBasicParsing -TimeoutSec $DefaultTimeout -UserAgent $UserAgent -WebSession $Session $url
+			# $r = Invoke-WebRequest -Method Post -Headers @{ "Referer" = $ref } -UseBasicParsing -TimeoutSec $DefaultTimeout -UserAgent $UserAgent -WebSession $Session $url
+            $wr = [System.Net.WebRequest]::Create($url)
+			# Windows 7 PowerShell doesn't support 'Invoke-WebRequest -Headers @{"Referer" = $ref}'
+			# (produces "The 'Referer' header must be modified using the appropriate property or method")
+			# so we use StreamReader() with GetResponseStream() and do this instead.
+			$wr.Method = "POST"
+			$wr.Referer = $ref
+			$wr.UserAgent = $UserAgent
+			$wr.ContentLength = 0
+			$sr = New-Object System.IO.StreamReader($wr.GetResponse().GetResponseStream())
+			$r = $sr.ReadToEnd()
 			if ($r -match "errorModalMessage") {
 				$Alt = [regex]::Match($r.Content, '<p id="errorModalMessage">(.+?)<\/p>').Groups[1].Value -replace "<[^>]+>" -replace "\s+", " " -replace "\?\?\?", "-"
 				$Alt = [System.Text.Encoding]::UTF8.GetString([byte[]][char[]]$Alt)
@@ -742,7 +760,7 @@ function Process-Download-Link([string]$Url)
 				$pattern = '.*\/(.*\.iso).*'
 				$File = [regex]::Match($Url, $pattern).Groups[1].Value
 				# PowerShell implicit conversions are iffy, so we need to force them...
-				$str_size = (curl -UseBasicParsing -TimeoutSec $DefaultTimeout -Uri $Url -Method Head).Headers.'Content-Length'
+				$str_size = (Invoke-WebRequest -UseBasicParsing -TimeoutSec $DefaultTimeout -Uri $Url -Method Head).Headers.'Content-Length'
 				$tmp_size = [uint64]::Parse($str_size)
 				$Size = Size-To-Human-Readable $tmp_size
 				Write-Host "Downloading '$File' ($Size)..."
@@ -766,12 +784,6 @@ if ($Cmd) {
 	$winLanguageId = $null
 	$winLanguageName = $null
 	$winLink = $null
-
-	# Windows 7 and non Windows platforms are too much of a liability
-	if ($winver -le 6.1) {
-		Error(Get-Translation("This feature is not available on this platform."))
-		exit 403
-	}
 
 	$i = 0
 	$Selected = ""
@@ -930,8 +942,11 @@ $XAML.SelectNodes("//*[@Name]") | ForEach-Object { Set-Variable -Name ($_.Name) 
 $XMLForm.Title = $AppTitle
 if ($Icon) {
 	$XMLForm.Icon = $Icon
+# Use a fallback image on Windows 7 and older as the image specified in our else statement doesn't exist in Windows versions prior to Windows 8
+} elseif ($winver -le 6.1) {
+	$XMLForm.Icon = [WinAPI.Utils]::ExtractIcon("shell32.dll", -41, $true) | ConvertTo-ImageSource
 } else {
-	$XMLForm.Icon = [WinAPI.Utils]::ExtractIcon("imageres.dll", -5205, $true) | ConvertTo-ImageSource
+    $XMLForm.Icon = [WinAPI.Utils]::ExtractIcon("imageres.dll", -5205, $true) | ConvertTo-ImageSource
 }
 if ($Locale.StartsWith("ar") -or $Locale.StartsWith("fa") -or $Locale.StartsWith("he")) {
 	$XMLForm.FlowDirection = "RightToLeft"
@@ -939,12 +954,6 @@ if ($Locale.StartsWith("ar") -or $Locale.StartsWith("fa") -or $Locale.StartsWith
 $WindowsVersionTitle.Text = Get-Translation("Version")
 $Continue.Content = Get-Translation("Continue")
 $Back.Content = Get-Translation("Close")
-
-# Windows 7 and non Windows platforms are too much of a liability
-if ($winver -le 6.1) {
-	Error(Get-Translation("This feature is not available on this platform."))
-	exit 403
-}
 
 # Populate the Windows versions
 $i = 0
@@ -1071,6 +1080,8 @@ $XMLForm.ShowDialog() | Out-Null
 
 # Clean up & exit
 exit $ExitCode
+
+# I likely can't recreate this. In the future, remove this and remove the checks in Rufus 7.
 
 # SIG # Begin signature block
 # MIIkWAYJKoZIhvcNAQcCoIIkSTCCJEUCAQExDzANBglghkgBZQMEAgEFADB5Bgor
