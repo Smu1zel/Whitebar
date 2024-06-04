@@ -1,4 +1,4 @@
-#
+﻿#
 # Whitebar v1.56 - Feature ISO Downloader, for retail Windows images and UEFI Shell
 # Original code from Fido by Pete Batard. Fido is Copyright © 2019-2024 Pete Batard <pete@akeo.ie>
 # Command line support: Copyright © 2021 flx5
