@@ -127,8 +127,7 @@ if (!$Cmd) {
 	Add-Type -AssemblyName PresentationFramework
 
 	# Hide the powershell window: https://stackoverflow.com/a/27992426/1069307
-# TODO: Uncomment this when the script is finished
-#	[WinAPI.Utils]::ShowWindow(([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle, 0) | Out-Null
+	[WinAPI.Utils]::ShowWindow(([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle, 0) | Out-Null
 }
 #endregion
 
