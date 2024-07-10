@@ -1,5 +1,5 @@
 ﻿#
-# Whitebar v1.56 - Feature ISO Downloader, for retail Windows images and UEFI Shell
+# Whitebar v1.58 - Feature ISO Downloader, for retail Windows images and UEFI Shell
 # Original code from Fido by Pete Batard. Fido is Copyright © 2019-2024 Pete Batard <pete@akeo.ie>
 # Command line support: Copyright © 2021 flx5
 # ConvertTo-ImageSource: Copyright © 2016 Chris Carter
@@ -151,17 +151,6 @@ $WindowsVersions = @(
 			@("Windows 10 Home China ", ($zh + 2378))
 		)
 	)
-	@(
-		@("Windows 8.1", "windows8ISO"),
-		@(
-			"Update 3 (build 9600)",
-			@("Windows 8.1 Standard", 52),
-			@("Windows 8.1 N", 55)
-			@("Windows 8.1 Single Language", 48),
-			@("Windows 8.1 K", ($ko + 61)),
-			@("Windows 8.1 KN", ($ko + 62))
-		)
-	),
 	@(
 		@("UEFI Shell 2.2", "UEFI_SHELL 2.2"),
 		@(
