@@ -1,5 +1,5 @@
 ﻿#
-# Whitebar v1.58 - Feature ISO Downloader, for retail Windows images and UEFI Shell
+# Whitebar v1.60 - Feature ISO Downloader, for retail Windows images and UEFI Shell
 # Original code from Fido by Pete Batard. Fido is Copyright © 2019-2024 Pete Batard <pete@akeo.ie>
 # Command line support: Copyright © 2021 flx5
 # ConvertTo-ImageSource: Copyright © 2016 Chris Carter
@@ -47,7 +47,9 @@ param(
 	# (Optional) Only display the download URL [Toggles commandline mode]
 	[switch]$GetUrl = $false,
 	# (Optional) Increase verbosity
-	[switch]$Verbose = $false
+	[switch]$Verbose = $false,
+	# (Optional) Produce debugging information
+	[switch]$Debug = $false
 )
 #endregion
 
@@ -132,15 +134,14 @@ if (!$Cmd) {
 #endregion
 
 #region Data
-$zh = 0x10000
-$ko = 0x20000
 $WindowsVersions = @(
 	@(
 		@("Windows 11", "windows11"),
 		@(
-			"23H2 v2 (Build 22631.2861 - 2023.12)",
-			@("Windows 11 Home/Pro/Edu", 2935),
-			@("Windows 11 Home China ", ($zh + 2936))
+			"24H2 (Build 26100.1742 - 2024.10)",
+			@("Windows 11 Home/Pro/Edu", 3113),
+			@("Windows 11 Home China ", ($zh + 3115))
+			@("Windows 11 Pro China ", ($zh + 3114))
 		)
 	),
 	@(
@@ -449,16 +450,16 @@ $RequestData["GetLangs"] = @("a8f8f489-4c7f-463a-9ca6-5cff94d8d041", "getskuinfo
 # This GUID applies to visitors of the en-US download page. Other locales may get a different GUID.
 $RequestData["GetLinks"] = @("6e2a1789-ef16-4f27-a296-74ef7ef5d96b", "GetProductDownloadLinksBySku" )
 # Create a semi-random Linux User-Agent string
-$FirefoxVersion = Get-Random -Minimum 90 -Maximum 110
+$FirefoxVersion = Get-Random -Minimum 110 -Maximum 135
 $FirefoxDate = Get-RandomDate
 $UserAgent = "Mozilla/5.0 (X11; Linux i586; rv:$FirefoxVersion.0) Gecko/$FirefoxDate Firefox/$FirefoxVersion.0"
-$Verbosity = 2
-if ($Cmd) {
-	if ($GetUrl) {
-		$Verbosity = 0
-	} elseif (!$Verbose) {
-		$Verbosity = 1
-	}
+$Verbosity = 1
+if ($Debug) {
+	$Verbosity = 5
+} elseif ($Verbose) {
+	$Verbosity = 2
+} elseif ($Cmd -and $GetUrl) {
+	$Verbosity = 0
 }
 #endregion
 
@@ -547,8 +548,8 @@ function Get-Windows-Editions([int]$SelectedVersion, [int]$SelectedRelease)
 	foreach ($release in $WindowsVersions[$SelectedVersion][$SelectedRelease])
 	{
 		if ($release -is [array]) {
-			if (($release[1] -lt 0x10000) -or ($Locale.StartsWith("ko") -and ($release[1] -band $ko)) -or ($Locale.StartsWith("zh") -and ($release[1] -band $zh))) {
-				$editions += @(New-Object PsObject -Property @{ Edition = $release[0]; Id = $($release[1] -band 0xFFFF) })
+			if (!($release[0].Contains("China")) -or ($Locale.StartsWith("zh"))) {
+				$editions += @(New-Object PsObject -Property @{ Edition = $release[0]; Id = $release[1] })
 			}
 		}
 	}
@@ -560,14 +561,7 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 {
 	$languages = @()
 	$i = 0;
-	if ($WindowsVersions[$SelectedVersion][0][1] -eq "WIN7") {
-		foreach ($entry in $Windows7Versions[$SelectedEdition]) {
-			if ($entry[0] -ne "") {
-				$languages += @(New-Object PsObject -Property @{ DisplayLanguage = $entry[0]; Language = $entry[1]; Id = $i })
-			}
-			$i++
-		}
-	} elseif ($WindowsVersions[$SelectedVersion][0][1].StartsWith("UEFI_SHELL")) {
+	if ($WindowsVersions[$SelectedVersion][0][1].StartsWith("UEFI_SHELL")) {
 		$languages += @(New-Object PsObject -Property @{ DisplayLanguage = "English (US)"; Language = "en-us"; Id = 0 })
 	} else {
 		# Microsoft download protection now requires the sessionId to be whitelisted through vlscppe.microsoft.com/tags
@@ -587,7 +581,7 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 		$url += "&segments=software-download," + $WindowsVersions[$SelectedVersion][0][1]
 		$url += "&query=&action=" + $RequestData["GetLangs"][1]
 		$url += "&sessionId=" + $SessionId
-		$url += "&productEditionId=" + [Math]::Abs($SelectedEdition)
+		$url += "&productEditionId=" + $SelectedEdition
 		$url += "&sdVersion=2"
 		if ($Verbosity -ge 2) {
 			Write-Host Querying $url
@@ -596,6 +590,11 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 		$script:SelectedIndex = 0
 		try {
 			$r = Invoke-WebRequest -Method Post -UseBasicParsing -TimeoutSec $DefaultTimeout -UserAgent $UserAgent -SessionVariable "Session" $url
+			if ($Verbosity -ge 5) {
+				Write-Host "=============================================================================="
+				Write-Host $r
+				Write-Host "=============================================================================="
+			}
 			if ($r -match "errorModalMessage") {
 				Throw-Error -Req $r -Alt "Could not retrieve languages from server"
 			}
@@ -631,11 +630,7 @@ function Get-Windows-Languages([int]$SelectedVersion, [int]$SelectedEdition)
 function Get-Windows-Download-Links([int]$SelectedVersion, [int]$SelectedRelease, [int]$SelectedEdition, [string]$SkuId, [string]$LanguageName)
 {
 	$links = @()
-	if ($WindowsVersions[$SelectedVersion][0][1] -eq "WIN7") {
-		foreach ($Version in $Windows7Versions[$SelectedEdition][$SkuId][2]) {
-			$links += @(New-Object PsObject -Property @{ Type = $Version[0]; Link = $Version[1] })
-		}
-	} elseif ($WindowsVersions[$SelectedVersion][0][1].StartsWith("UEFI_SHELL")) {
+	if ($WindowsVersions[$SelectedVersion][0][1].StartsWith("UEFI_SHELL")) {
 		$tag = $WindowsVersions[$SelectedVersion][$SelectedRelease][0].Split(' ')[0]
 		$shell_version = $WindowsVersions[$SelectedVersion][0][1].Split(' ')[1]
 		$url = "https://github.com/pbatard/UEFI-Shell/releases/download/" + $tag
@@ -695,6 +690,11 @@ function Get-Windows-Download-Links([int]$SelectedVersion, [int]$SelectedRelease
 			$wr.ContentLength = 0
 			$sr = New-Object System.IO.StreamReader($wr.GetResponse().GetResponseStream())
 			$r = $sr.ReadToEnd()
+			if ($Verbosity -ge 5) {
+				Write-Host "=============================================================================="
+				Write-Host $r
+				Write-Host "=============================================================================="
+			}
 			if ($r -match "errorModalMessage") {
 				$Alt = [regex]::Match($r.Content, '<p id="errorModalMessage">(.+?)<\/p>').Groups[1].Value -replace "<[^>]+>" -replace "\s+", " " -replace "\?\?\?", "-"
 				$Alt = [System.Text.Encoding]::UTF8.GetString([byte[]][char[]]$Alt)
